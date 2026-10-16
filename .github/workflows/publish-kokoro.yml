@@ -1,0 +1,43 @@
+name: Publish prepared Kokoro model
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-kokoro.yml
+      - Tools/package_kokoro_release.py
+permissions:
+  contents: write
+concurrency:
+  group: kokoro-model-release-v1
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'ATC-commits/Kokoro-FP32-Michael-and-Heart-v1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Reproduce and verify the tested FP32 pack
+        run: |
+          python3 Tools/package_kokoro_release.py --cache "$RUNNER_TEMP/kokoro-cache" --output "$RUNNER_TEMP/kokoro-release"
+          cd "$RUNNER_TEMP/kokoro-release"
+          echo 'aaea5c1a1385878866e70b09fc50e47959e8186ef7f96f4717dcef076b50a4a0  kokoro-fp32-michael-heart-v1.tar.gz' | sha256sum --check --strict
+      - name: Publish model assets without replacing an existing version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          tag=kokoro-fp32-michael-heart-v1
+          asset=kokoro-fp32-michael-heart-v1.tar.gz
+          if gh release view "$tag" > /dev/null 2>&1; then
+            mkdir "$RUNNER_TEMP/existing-release"
+            gh release download "$tag" --pattern "$asset" --dir "$RUNNER_TEMP/existing-release"
+            (cd "$RUNNER_TEMP/existing-release" && echo "aaea5c1a1385878866e70b09fc50e47959e8186ef7f96f4717dcef076b50a4a0  $asset" | sha256sum --check --strict)
+          else
+            gh release create "$tag" "$RUNNER_TEMP/kokoro-release/$asset" "$RUNNER_TEMP/kokoro-release/$asset.sha256" "$RUNNER_TEMP/kokoro-release/release-manifest.json" --target "$GITHUB_SHA" --title 'Kokoro FP32 — Michael and Heart v1' --notes-file docs/KOKORO_RELEASE_NOTES.md --draft --latest=false
+          fi
+          gh release edit "$tag" --draft=false --latest=false
